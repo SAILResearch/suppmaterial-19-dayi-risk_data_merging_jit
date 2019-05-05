@@ -1,5 +1,7 @@
 # Set working directory to that of the current file
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))  # Only when using RStudio
+source(file.path("evalUtils.r", fsep = .Platform$file.sep))
+source(file.path("MixRF.R", fsep = .Platform$file.sep))
 
 # Environment preparation
 library(readr)
@@ -14,6 +16,14 @@ library(MuMIn)
 library(boot)
 library(plyr)
 library(doParallel)
+library(caret)
+library(ranger)
+library(ROCR)
+library(data.table)
+#library(reticulate)
+#use_virtualenv("/Users/lindayi/Documents/OneDrive - Queen's University/SAIL/mixed-effect/replicate_Lin2018Risks/testenv", required = TRUE)
+
+registerDoParallel(cores = detectCores())
 
 # Data preparation
 context <- read.csv(file.path("data","context.csv", fsep = .Platform$file.sep), row.names = 1)
@@ -46,22 +56,16 @@ for (i in 1:length(project_names)) {
                                              ndev = col_skip(), age = col_skip(), nuc = col_skip(),
                                              exp = col_skip(), rexp = col_skip(), sexp = col_skip()))
   
-  projects[[i]]$norm_entropy <- projects[[i]]$entrophy / sapply(projects[[i]]$nf, log2) # Normalize entropy
-  projects[[i]][is.na(projects[[i]])] <- 0
+  projects[[i]]$loc <- projects[[i]]$la + projects[[i]]$ld
   
-  projects[[i]][,metrics] <- lapply(projects[[i]][,metrics], scale) # Data scaling
+  projects[[i]]$norm_entropy <- 0
+  tmp_norm_entropy <- projects[[i]]$entrophy / sapply(projects[[i]]$nf, log2) # Normalize entropy
+  projects[[i]][projects[[i]]$nf >= 2, "norm_entropy"] <- tmp_norm_entropy[projects[[i]]$nf >= 2]
+  
   projects[[i]]$project <- project_names[i]
-  
-  projects[[i]]$relative_churn <- (projects[[i]]$la + projects[[i]]$ld) / projects[[i]]$lt # (la+ld)/lt
   
   projects[[i]] <- cbind(projects[[i]], rep(context[project_names[i],], times = nrow(projects[[i]])))
 } 
-
-all_projects <- projects[[1]]
-for (i in 2:length(project_names)) {
-  all_projects <- rbind(all_projects, projects[[i]])
-} 
-all_projects$project <- as.factor(all_projects$project) # Merged dataset
 
 # Correlation and redundancy
 vcobj <- varclus(~., data = all_projects[,c("fix", metrics)], similarity = "spearman", trans = "abs")
@@ -71,6 +75,22 @@ abline(h = 1 - threshold, col = "red", lty = 2, lwd = 2)
 
 redun_obj <- redun(~ relative_churn + ns + norm_entropy + nf + fix + lt, data = all_projects, nk=5)
 paste(redun_obj$Out, collapse =", ")
+
+scale_metrics <- c("ns","nf","lt","norm_entropy","relative_churn")
+
+for (i in 1:length(project_names)) {
+  projects[[i]]$relative_churn <- 0
+  tmp_relative_churn <- (projects[[i]]$la + projects[[i]]$ld) / projects[[i]]$lt # (la+ld)/lt
+  projects[[i]][projects[[i]]$lt >= 1, "relative_churn"] <- tmp_relative_churn[projects[[i]]$lt >= 1]
+  projects[[i]][is.na(projects[[i]])] <- 0
+  projects[[i]][,scale_metrics] <- lapply(projects[[i]][,scale_metrics], scale) # Data scaling
+}
+
+all_projects <- projects[[1]]
+for (i in 2:length(project_names)) {
+  all_projects <- rbind(all_projects, projects[[i]])
+} 
+all_projects$project <- as.factor(all_projects$project) # Merged dataset
 
 # ===================== RQ1 ========================
 local.jit <- c()
@@ -188,3 +208,106 @@ registerDoParallel(cores=detectCores())
 randomeff_models <- llply(seq(1, 9, 1), get_randomeff_models, .parallel = TRUE)
 anova(context.aware, randomeff_models[[1]], randomeff_models[[2]], randomeff_models[[3]], randomeff_models[[4]], randomeff_models[[5]], 
       randomeff_models[[6]], randomeff_models[[7]], randomeff_models[[8]], randomeff_models[[9]], mixed.effect.null)
+
+# ===================== RQ5 ========================
+
+get_lr_perf <- function(i) {
+  training_set <- subset(all_projects, all_projects$project != project_names[i])
+  testing_set <- subset(all_projects, all_projects$project == project_names[i])
+  
+  tmp_lr_model <- glm(contains_bug ~ fix + ns + nf + norm_entropy + relative_churn + lt, data = training_set, family="binomial")
+  tmp_lr_pred <- predict(tmp_lr_model, newdata = testing_set, type = "response")
+  
+  return(evalPredict(testing_set$contains_bug, tmp_lr_pred, testing_set$loc))
+}
+lr_perf <- llply(seq(1, length(project_names), 1), get_lr_perf, .parallel = TRUE)
+lr_perf <- rbindlist(lr_perf, fill=TRUE)
+
+get_project_aware_lr_perf <- function(i, correct = TRUE) {
+  training_set <- subset(all_projects, all_projects$project != project_names[i])
+  testing_set <- subset(all_projects, all_projects$project == project_names[i])
+  
+  tmp_project_aware_lr_model <- glmer(contains_bug ~ (norm_entropy | project) + fix + ns + nf + relative_churn + lt, 
+                                      data = training_set, family = "binomial")
+  tmp_project_aware_lr_pred <- predict(tmp_project_aware_lr_model, testing_set, allow.new.levels = TRUE, type = "response")
+  tmp_project_aware_lr_pred_corrected <- predict(tmp_project_aware_lr_model, testing_set, allow.new.levels = TRUE, type = "link")
+  tmp_project_aware_lr_pred_corrected <- tmp_project_aware_lr_pred_corrected - coef(summary(tmp_project_aware_lr_model))[1,1] + median(coef(tmp_project_aware_lr_model)[[1]][,2]) + testing_set$norm_entropy * median(coef(tmp_project_aware_lr_model)[[1]][,1])
+  tmp_project_aware_lr_pred_corrected <- inv.logit(tmp_project_aware_lr_pred_corrected)
+  
+  if(correct) {
+    return(evalPredict(testing_set$contains_bug, tmp_project_aware_lr_pred_corrected, testing_set$loc))
+  } else {
+    return(evalPredict(testing_set$contains_bug, tmp_project_aware_lr_pred, testing_set$loc))
+  }
+}
+project_aware_lr_perf_correct <- llply(seq(1, length(project_names), 1), get_project_aware_lr_perf, .parallel = TRUE)
+project_aware_lr_perf_correct <- rbindlist(project_aware_lr_perf_correct, fill=TRUE)
+
+get_context_aware_lr_perf <- function(i, correct = TRUE) {
+  training_set <- subset(all_projects, all_projects$project != project_names[i])
+  testing_set <- subset(all_projects, all_projects$project == project_names[i])
+  
+  tmp_context_aware_lr_model <- glmer(contains_bug ~ (0 + norm_entropy | project) + fix + ns + nf + relative_churn + lt + (1 | language) + (1 | nlanguage) + (1 | TLOC) + (1 | NFILES) + (1 | NCOMMIT) + (1 | NDEV) + (1 | audience) + (1 | ui) + (1 | database), 
+                                      data = training_set, family = "binomial", 
+                                      control=glmerControl(optimizer="optimx",
+                                                           optCtrl=list(method="nlminb")))
+  tmp_context_aware_lr_pred <- predict(tmp_context_aware_lr_model, testing_set, allow.new.levels = TRUE, type = "response")
+  tmp_context_aware_lr_pred_corrected <- predict(tmp_context_aware_lr_model, testing_set, allow.new.levels = TRUE, type = "link")
+  tmp_context_aware_lr_pred_corrected <- tmp_context_aware_lr_pred_corrected - coef(summary(tmp_context_aware_lr_model))[1,1] + median(coef(tmp_context_aware_lr_model)$project[,2]) + testing_set$norm_entropy * median(coef(tmp_context_aware_lr_model)$project[,1])
+  if (testing_set$language[1] == 'PHP' || testing_set$language[1] == 'C' || testing_set$language[1] == 'C++' || testing_set$language[1] == 'Perl') {
+    tmp_context_aware_lr_pred_corrected <- tmp_context_aware_lr_pred_corrected + median(coef(tmp_context_aware_lr_model)$language[,2])
+  }
+  tmp_context_aware_lr_pred_corrected <- inv.logit(tmp_context_aware_lr_pred_corrected)
+  
+  if(correct) {
+    return(evalPredict(testing_set$contains_bug, tmp_context_aware_lr_pred_corrected, testing_set$loc))
+  } else {
+    return(evalPredict(testing_set$contains_bug, tmp_context_aware_lr_pred, testing_set$loc))
+  }
+}
+context_aware_lr_perf_correct <- llply(seq(1, length(project_names), 1), get_context_aware_lr_perf, .parallel = TRUE)
+context_aware_lr_perf_correct <- rbindlist(context_aware_lr_perf_correct, fill=TRUE)
+
+training_set[1,]$fix * coef(summary(tmp_context_aware_lr_model))['fixTRUE',1] + 
+  training_set[1,]$ns * coef(summary(tmp_context_aware_lr_model))['ns',1] + 
+  training_set[1,]$nf * coef(summary(tmp_context_aware_lr_model))['nf',1] + 
+  training_set[1,]$relative_churn * coef(summary(tmp_context_aware_lr_model))['relative_churn',1] + 
+  training_set[1,]$lt * coef(summary(tmp_context_aware_lr_model))['lt',1] + 
+  coef(summary(tmp_context_aware_lr_model))['(Intercept)',1] +
+  #coef(tmp_context_aware_lr_model)$project['accumulo', '(Intercept)'] +
+  coef(tmp_context_aware_lr_model)$project['accumulo', 'norm_entropy'] * training_set[1,]$norm_entropy +
+  coef(tmp_context_aware_lr_model)$language[context['accumulo','language'], '(Intercept)'] + 
+  coef(tmp_context_aware_lr_model)$nlanguage[context['accumulo','nlanguage'], '(Intercept)'] + 
+  coef(tmp_context_aware_lr_model)$TLOC[context['accumulo','TLOC'], '(Intercept)'] + 
+  coef(tmp_context_aware_lr_model)$NFILES[context['accumulo','NFILES'], '(Intercept)'] + 
+  coef(tmp_context_aware_lr_model)$NCOMMIT[context['accumulo','NCOMMIT'], '(Intercept)'] + 
+  coef(tmp_context_aware_lr_model)$NDEV[context['accumulo','NDEV'], '(Intercept)'] + 
+  coef(tmp_context_aware_lr_model)$audience[context['accumulo','audience'], '(Intercept)'] + 
+  coef(tmp_context_aware_lr_model)$ui[context['accumulo','ui'], '(Intercept)'] + 
+  coef(tmp_context_aware_lr_model)$database[as.character(context['accumulo','database']), '(Intercept)']
+
+  
+
+rf_perf <- as.data.frame(c())
+for (i in 1:length(project_names)) {
+  training_set <- subset(all_projects, all_projects$project != project_names[i])
+  testing_set <- subset(all_projects, all_projects$project == project_names[i])
+  
+  tmp_rf_model <- ranger(as.factor(contains_bug) ~ fix + ns + nf + norm_entropy + relative_churn + lt, data = training_set, probability = TRUE)
+  tmp_rf_pred <- predict(tmp_rf_model, testing_set)$predictions[,2]
+  
+  rf_perf <- rbind(rf_perf, evalPredict(testing_set$contains_bug, tmp_rf_pred, testing_set$loc))
+}
+
+project_aware_rf_perf <- as.data.frame(c())
+for (i in 1:length(project_names)) {
+  training_set <- subset(all_projects, all_projects$project != project_names[i])
+  testing_set <- subset(all_projects, all_projects$project == project_names[i])
+
+  tmp_project_aware_rf_model <- MixRFb(training_set$contains_bug, x = 'fix + ns + nf + relative_churn + lt', random = '(norm_entropy | project)', data = training_set, verbose=T, ErrorTolerance = 1, ErrorTolerance0 = 0.3, MaxIterations=50)
+  tmp_project_aware_rf_pred <- predict.MixRF(tmp_project_aware_rf_model, testing_set, EstimateRE = TRUE)
+  tmp_project_aware_rf_pred_corrected <- tmp_project_aware_rf_pred + median(coef(tmp_project_aware_rf_model$MixedModel)$project[,'(Intercept)']) + median(coef(tmp_project_aware_rf_model$MixedModel)$project[,'norm_entropy']) * testing_set$norm_entropy
+  tmp_project_aware_rf_pred_corrected <- inv.logit(tmp_project_aware_rf_pred_corrected)
+  
+  project_aware_rf_perf <- rbind(project_aware_rf_perf, evalPredict(testing_set$contains_bug, tmp_project_aware_rf_pred_corrected, testing_set$loc))
+}
