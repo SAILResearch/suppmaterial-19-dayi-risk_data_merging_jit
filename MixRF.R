@@ -49,7 +49,8 @@ MixRFb <- function(Y, x, random, data, initialRandomEffects=0,
       resi = y - pred
       
       ## Estimate New Random Effects and Errors using lmer
-      lmefit <- lmer(f0, data=data, weights=weights)
+      lmefit <- lmer(f0, data=data, weights=weights, 
+                     control = lmerControl(optimizer = "nloptwrap", calc.derivs = FALSE))
       
       # check convergence
       LogLik <- as.numeric(logLik(lmefit))

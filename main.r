@@ -311,3 +311,28 @@ for (i in 1:length(project_names)) {
   
   project_aware_rf_perf <- rbind(project_aware_rf_perf, evalPredict(testing_set$contains_bug, tmp_project_aware_rf_pred_corrected, testing_set$loc))
 }
+
+get_context_aware_rf_perf <- function(i, correct = TRUE) {
+  training_set <- subset(all_projects, all_projects$project != project_names[i])
+  testing_set <- subset(all_projects, all_projects$project == project_names[i])
+  
+  tmp_context_aware_rf_model <- MixRFb(training_set$contains_bug, x = 'fix + ns + nf + relative_churn + lt', random = '(0 + norm_entropy | project) + (1 | language) + (1 | nlanguage) + (1 | TLOC) + (1 | NFILES) + (1 | NCOMMIT) + (1 | NDEV) + (1 | audience) + (1 | ui) + (1 | database)', 
+                                       data = training_set, verbose=T, ErrorTolerance = 1, ErrorTolerance0 = 0.3, 
+                                       MaxIterations = 1, MaxIterations0 = 1)
+                                       #MaxIterations=50)
+  
+  tmp_context_aware_rf_pred <- predict.MixRF(tmp_context_aware_rf_model, testing_set, EstimateRE = TRUE)
+  tmp_context_aware_rf_pred_corrected <- tmp_context_aware_rf_pred + median(coef(tmp_context_aware_rf_model$MixedModel)$project[,'norm_entropy']) * testing_set$norm_entropy
+  if (testing_set$language[1] == 'PHP' || testing_set$language[1] == 'C' || testing_set$language[1] == 'C++' || testing_set$language[1] == 'Perl') {
+    tmp_context_aware_rf_pred_corrected <- tmp_context_aware_rf_pred_corrected + median(coef(tmp_context_aware_rf_model$MixedModel)$language[,2])
+  }
+  tmp_context_aware_rf_pred_corrected <- inv.logit(tmp_context_aware_rf_pred_corrected)
+  
+  if(correct) {
+    return(evalPredict(testing_set$contains_bug, tmp_context_aware_rf_pred_corrected, testing_set$loc))
+  } else {
+    return(evalPredict(testing_set$contains_bug, tmp_context_aware_rf_pred, testing_set$loc))
+  }
+}
+context_aware_rf_perf_correct <- llply(seq(1, length(project_names), 1), get_context_aware_rf_perf, .parallel = TRUE)
+context_aware_rf_perf_correct <- rbindlist(context_aware_rf_perf_correct, fill=TRUE)
