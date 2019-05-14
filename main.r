@@ -210,7 +210,7 @@ anova(context.aware, randomeff_models[[1]], randomeff_models[[2]], randomeff_mod
       randomeff_models[[6]], randomeff_models[[7]], randomeff_models[[8]], randomeff_models[[9]], mixed.effect.null)
 
 # ===================== RQ5 ========================
-
+# Performance of Global JIT Model (Logistic Regression)
 get_lr_perf <- function(i) {
   training_set <- subset(all_projects, all_projects$project != project_names[i])
   testing_set <- subset(all_projects, all_projects$project == project_names[i])
@@ -223,6 +223,7 @@ get_lr_perf <- function(i) {
 lr_perf <- llply(seq(1, length(project_names), 1), get_lr_perf, .parallel = TRUE)
 lr_perf <- rbindlist(lr_perf, fill=TRUE)
 
+# Performance of Project Aware JIT Model (Logistic Regression)
 get_project_aware_lr_perf <- function(i, correct = TRUE) {
   training_set <- subset(all_projects, all_projects$project != project_names[i])
   testing_set <- subset(all_projects, all_projects$project == project_names[i])
@@ -243,6 +244,7 @@ get_project_aware_lr_perf <- function(i, correct = TRUE) {
 project_aware_lr_perf_correct <- llply(seq(1, length(project_names), 1), get_project_aware_lr_perf, .parallel = TRUE)
 project_aware_lr_perf_correct <- rbindlist(project_aware_lr_perf_correct, fill=TRUE)
 
+# Performance of Context Aware JIT Model (Logistic Regression)
 get_context_aware_lr_perf <- function(i, correct = TRUE) {
   training_set <- subset(all_projects, all_projects$project != project_names[i])
   testing_set <- subset(all_projects, all_projects$project == project_names[i])
@@ -268,26 +270,7 @@ get_context_aware_lr_perf <- function(i, correct = TRUE) {
 context_aware_lr_perf_correct <- llply(seq(1, length(project_names), 1), get_context_aware_lr_perf, .parallel = TRUE)
 context_aware_lr_perf_correct <- rbindlist(context_aware_lr_perf_correct, fill=TRUE)
 
-training_set[1,]$fix * coef(summary(tmp_context_aware_lr_model))['fixTRUE',1] + 
-  training_set[1,]$ns * coef(summary(tmp_context_aware_lr_model))['ns',1] + 
-  training_set[1,]$nf * coef(summary(tmp_context_aware_lr_model))['nf',1] + 
-  training_set[1,]$relative_churn * coef(summary(tmp_context_aware_lr_model))['relative_churn',1] + 
-  training_set[1,]$lt * coef(summary(tmp_context_aware_lr_model))['lt',1] + 
-  coef(summary(tmp_context_aware_lr_model))['(Intercept)',1] +
-  #coef(tmp_context_aware_lr_model)$project['accumulo', '(Intercept)'] +
-  coef(tmp_context_aware_lr_model)$project['accumulo', 'norm_entropy'] * training_set[1,]$norm_entropy +
-  coef(tmp_context_aware_lr_model)$language[context['accumulo','language'], '(Intercept)'] + 
-  coef(tmp_context_aware_lr_model)$nlanguage[context['accumulo','nlanguage'], '(Intercept)'] + 
-  coef(tmp_context_aware_lr_model)$TLOC[context['accumulo','TLOC'], '(Intercept)'] + 
-  coef(tmp_context_aware_lr_model)$NFILES[context['accumulo','NFILES'], '(Intercept)'] + 
-  coef(tmp_context_aware_lr_model)$NCOMMIT[context['accumulo','NCOMMIT'], '(Intercept)'] + 
-  coef(tmp_context_aware_lr_model)$NDEV[context['accumulo','NDEV'], '(Intercept)'] + 
-  coef(tmp_context_aware_lr_model)$audience[context['accumulo','audience'], '(Intercept)'] + 
-  coef(tmp_context_aware_lr_model)$ui[context['accumulo','ui'], '(Intercept)'] + 
-  coef(tmp_context_aware_lr_model)$database[as.character(context['accumulo','database']), '(Intercept)']
-
-  
-
+# Performance of Global JIT Model (Random Forest)
 rf_perf <- as.data.frame(c())
 for (i in 1:length(project_names)) {
   training_set <- subset(all_projects, all_projects$project != project_names[i])
@@ -299,6 +282,7 @@ for (i in 1:length(project_names)) {
   rf_perf <- rbind(rf_perf, evalPredict(testing_set$contains_bug, tmp_rf_pred, testing_set$loc))
 }
 
+# Performance of Project Aware JIT Model (Random Forest)
 project_aware_rf_perf <- as.data.frame(c())
 for (i in 1:length(project_names)) {
   training_set <- subset(all_projects, all_projects$project != project_names[i])
@@ -312,6 +296,7 @@ for (i in 1:length(project_names)) {
   project_aware_rf_perf <- rbind(project_aware_rf_perf, evalPredict(testing_set$contains_bug, tmp_project_aware_rf_pred_corrected, testing_set$loc))
 }
 
+# Performance of Context Aware JIT Model (Random Forest)
 get_context_aware_rf_perf <- function(i, correct = TRUE) {
   training_set <- subset(all_projects, all_projects$project != project_names[i])
   testing_set <- subset(all_projects, all_projects$project == project_names[i])
@@ -319,8 +304,7 @@ get_context_aware_rf_perf <- function(i, correct = TRUE) {
   tmp_context_aware_rf_model <- MixRFb(training_set$contains_bug, x = 'fix + ns + nf + relative_churn + lt', random = '(0 + norm_entropy | project) + (1 | language) + (1 | nlanguage) + (1 | TLOC) + (1 | NFILES) + (1 | NCOMMIT) + (1 | NDEV) + (1 | audience) + (1 | ui) + (1 | database)', 
                                        data = training_set, verbose=T, ErrorTolerance = 1, ErrorTolerance0 = 0.3, 
                                        MaxIterations = 1, MaxIterations0 = 1)
-                                       #MaxIterations=50)
-  
+
   tmp_context_aware_rf_pred <- predict.MixRF(tmp_context_aware_rf_model, testing_set, EstimateRE = TRUE)
   tmp_context_aware_rf_pred_corrected <- tmp_context_aware_rf_pred + median(coef(tmp_context_aware_rf_model$MixedModel)$project[,'norm_entropy']) * testing_set$norm_entropy
   if (testing_set$language[1] == 'PHP' || testing_set$language[1] == 'C' || testing_set$language[1] == 'C++' || testing_set$language[1] == 'Perl') {
@@ -336,3 +320,27 @@ get_context_aware_rf_perf <- function(i, correct = TRUE) {
 }
 context_aware_rf_perf_correct <- llply(seq(1, length(project_names), 1), get_context_aware_rf_perf, .parallel = TRUE)
 context_aware_rf_perf_correct <- rbindlist(context_aware_rf_perf_correct, fill=TRUE)
+
+# Goodness-of-fit of Global JIT Model (Random Forest)
+global_rf_model <- ranger(as.factor(contains_bug) ~ fix + ns + nf + norm_entropy + relative_churn + lt, data = all_projects, probability = TRUE)
+VarF <- var(global_rf_model$predictions[,2])
+VarDisp <- var(all_projects$contains_bug - global_rf_model$predictions[,2])
+Rc_global_rf <- (VarF)/(VarF+VarDisp)
+
+# Goodness-of-fit of Project Aware JIT Model (Random Forest)
+project_aware_rf_model <- MixRFb(all_projects$contains_bug, x = 'fix + ns + nf + relative_churn + lt', random = '(norm_entropy | project)', data = all_projects, verbose=T, ErrorTolerance = 1, ErrorTolerance0 = 0.3, MaxIterations=20)
+VarF <- var(project_aware_rf_model$forest$predictions)
+VarRand <- var(predict(project_aware_rf_model$MixedModel, newdata=all_projects))
+pred_err <- all_projects$contains_bug - inv.logit(predict.MixRF(project_aware_rf_model, all_projects, EstimateRE = TRUE))
+VarDisp <- var(logit(subset(abs(pred_err), abs(pred_err) > 0 & abs(pred_err) < 1)))
+Rc_project_aware_rf <- (VarF+VarRand)/(VarF+VarRand+VarDisp)
+
+# Goodness-of-fit of Context Aware JIT Model (Random Forest)
+context_aware_rf_model <- MixRFb(all_projects$contains_bug, x = 'fix + ns + nf + relative_churn + lt', random = '(0 + norm_entropy | project) + (1 | language) + (1 | nlanguage) + (1 | TLOC) + (1 | NFILES) + (1 | NCOMMIT) + (1 | NDEV) + (1 | audience) + (1 | ui) + (1 | database)', 
+                                     data = all_projects, verbose=T, ErrorTolerance = 1, ErrorTolerance0 = 0.3, 
+                                     MaxIterations = 10, MaxIterations0 = 10)
+VarF <- var(context_aware_rf_model$forest$predictions)
+VarRand <- var(predict(context_aware_rf_model$MixedModel, newdata=all_projects))
+pred_err <- all_projects$contains_bug - inv.logit(predict.MixRF(context_aware_rf_model, all_projects, EstimateRE = TRUE))
+VarDisp <- var(logit(subset(abs(pred_err), abs(pred_err) > 0 & abs(pred_err) < 1)))
+Rc_context_aware_rf <- (VarF+VarRand)/(VarF+VarRand+VarDisp)
