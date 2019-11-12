@@ -288,3 +288,5 @@ evalPredict <- function(actual, pred, loc, threshold = 0.5) {
   
   return(res)
 }
+
+rsq <- function (x, y) cor(x, y) ^ 2

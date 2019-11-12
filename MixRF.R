@@ -1,3 +1,5 @@
+# The following implementation is modified from https://github.com/randel/MixRF 
+
 MixRFb <- function(Y, x, random, data, initialRandomEffects=0,
                    ErrorTolerance=0.001, MaxIterations=200,
                    ErrorTolerance0=0.001, MaxIterations0=15, verbose=FALSE) {

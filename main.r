@@ -20,8 +20,6 @@ library(caret)
 library(ranger)
 library(ROCR)
 library(data.table)
-#library(reticulate)
-#use_virtualenv("/Users/lindayi/Documents/OneDrive - Queen's University/SAIL/mixed-effect/replicate_Lin2018Risks/testenv", required = TRUE)
 
 registerDoParallel(cores = detectCores())
 
@@ -133,83 +131,6 @@ Anova(global.jit, Type = 2)
 print(r.squaredGLMM(global.jit))
 
 # ===================== RQ3 ========================
-# Model training
-project.aware <- glmer(contains_bug ~ (norm_entropy | project) + fix + ns + nf + relative_churn + lt, 
-                       data = all_projects, family = "binomial")
-
-# Median Absolute Error for entropy and intercepts
-project.aware.entropy <- coef(project.aware)[[1]][,1]
-project.aware.intercept <- coef(project.aware)[[1]][,2]
-median(abs(local.entropy - project.aware.entropy)) # MAE for Entropy
-median(abs(local.intercept - project.aware.intercept)) # MAE for intercepts
-
-# Goodness-of-fit
-print(r.squaredGLMM(project.aware))
-
-# Chisq
-Anova(project.aware, Type = 2)
-
-# Likelihood Ratio Test
-project.aware.noslope <- glmer(contains_bug ~ (1 | project) + fix + ns + nf + relative_churn + lt, 
-                               data = all_projects, family = "binomial")
-mixed.effect.null <- glm(contains_bug ~ fix + ns + nf + relative_churn + lt, 
-                         data = all_projects, family = "binomial")
-anova(project.aware, project.aware.noslope, mixed.effect.null)
-
-# ===================== RQ4 ========================
-# Model training
-context.aware <- glmer(contains_bug ~ (0 + norm_entropy | project) + fix + ns + nf + relative_churn + lt + (1 | language) + (1 | language_count) + (1 | TLOC) + (1 | NFILES) + (1 | NCOMMIT) + (1 | NDEV) + (1 | audience) + (1 | ui) + (1 | database), 
-                       data = all_projects, family = "binomial", 
-                       control=glmerControl(optimizer="optimx",
-                                            optCtrl=list(method="nlminb")))
-
-# Median Absolute Error for entropy and intercepts
-context.aware.entropy <- coef(context.aware)[[1]][,1]
-context.aware.intercept <- c(-0.412809322, -0.403441522, -0.368979092, -0.019905339, -0.548783572, 
-                              -0.669703372, 0.387229798, -0.295431722, 0.301578719, -0.049754352, 
-                              0.136789488, 0.221394998, -0.145870962, -0.161213922, 0.412493888, 
-                              -0.431692062, -0.528704192, 0.132923678, -0.112635552, 0.714081312) # sum of intercepts of contextual factors for each project
-median(abs(local.entropy - context.aware.entropy)) # MAE for Entropy
-median(abs(local.intercept - context.aware.intercept)) # MAE for intercepts
-
-# Goodness-of-fit
-print(r.squaredGLMM(context.aware))
-
-# Chisq
-Anova(project.aware, Type = 2)
-
-# Likelihood Ratio Test (using multicores to train models parallelly)
-get_randomeff_models <- function(id) {
-  random.eff.formula <- c()
-  random.eff.formula[[1]] <- contains_bug ~ (0 + norm_entropy | project) + fix + ns + nf + relative_churn + lt + (1 | language) + (1 | language_count) + (1 | TLOC) + (1 | NFILES) + (1 | NCOMMIT) + (1 | NDEV) + (1 | audience) + (1 | ui)
-  random.eff.formula[[2]] <- contains_bug ~ (0 + norm_entropy | project) + fix + ns + nf + relative_churn + lt + (1 | language) + (1 | language_count) + (1 | TLOC) + (1 | NFILES) + (1 | NCOMMIT) + (1 | NDEV) + (1 | audience)
-  random.eff.formula[[3]] <- contains_bug ~ (0 + norm_entropy | project) + fix + ns + nf + relative_churn + lt + (1 | language) + (1 | language_count) + (1 | TLOC) + (1 | NFILES) + (1 | NCOMMIT) + (1 | NDEV)
-  random.eff.formula[[4]] <- contains_bug ~ (0 + norm_entropy | project) + fix + ns + nf + relative_churn + lt + (1 | language) + (1 | language_count) + (1 | TLOC) + (1 | NFILES) + (1 | NCOMMIT)
-  random.eff.formula[[5]] <- contains_bug ~ (0 + norm_entropy | project) + fix + ns + nf + relative_churn + lt + (1 | language) + (1 | language_count) + (1 | TLOC) + (1 | NFILES)
-  random.eff.formula[[6]] <- contains_bug ~ (0 + norm_entropy | project) + fix + ns + nf + relative_churn + lt + (1 | language) + (1 | language_count) + (1 | TLOC)
-  random.eff.formula[[7]] <- contains_bug ~ (0 + norm_entropy | project) + fix + ns + nf + relative_churn + lt + (1 | language) + (1 | language_count)
-  random.eff.formula[[8]] <- contains_bug ~ (0 + norm_entropy | project) + fix + ns + nf + relative_churn + lt + (1 | language)
-  random.eff.formula[[9]] <- contains_bug ~ (0 + norm_entropy | project) + fix + ns + nf + relative_churn + lt
-  
-  if (id == 1 || id == 5 || id == 7) {
-    tmp_mixed_model <- glmer(random.eff.formula[[id]], 
-                             data = all_projects, family = "binomial")
-  }
-  else {
-    tmp_mixed_model <- glmer(random.eff.formula[[id]], 
-                             data = all_projects, family = "binomial", 
-                             control=glmerControl(optimizer="optimx",
-                                                  optCtrl=list(method="nlminb")))
-  }
-  
-  return(tmp_mixed_model)
-}
-registerDoParallel(cores=detectCores())
-randomeff_models <- llply(seq(1, 9, 1), get_randomeff_models, .parallel = TRUE)
-anova(context.aware, randomeff_models[[1]], randomeff_models[[2]], randomeff_models[[3]], randomeff_models[[4]], randomeff_models[[5]], 
-      randomeff_models[[6]], randomeff_models[[7]], randomeff_models[[8]], randomeff_models[[9]], mixed.effect.null)
-
-# ===================== RQ5 ========================
 # Performance of Global JIT Model (Logistic Regression)
 get_lr_perf <- function(i) {
   training_set <- subset(all_projects, all_projects$project != project_names[i])
@@ -270,6 +191,85 @@ get_context_aware_lr_perf <- function(i, correct = TRUE) {
 context_aware_lr_perf_correct <- llply(seq(1, length(project_names), 1), get_context_aware_lr_perf, .parallel = TRUE)
 context_aware_lr_perf_correct <- rbindlist(context_aware_lr_perf_correct, fill=TRUE)
 
+
+# ===================== RQ4 ========================
+# Model training
+project.aware <- glmer(contains_bug ~ (norm_entropy | project) + fix + ns + nf + relative_churn + lt, 
+                       data = all_projects, family = "binomial")
+
+# Median Absolute Error for entropy and intercepts
+project.aware.entropy <- coef(project.aware)[[1]][,1]
+project.aware.intercept <- coef(project.aware)[[1]][,2]
+median(abs(local.entropy - project.aware.entropy)) # MAE for Entropy
+median(abs(local.intercept - project.aware.intercept)) # MAE for intercepts
+
+# Goodness-of-fit
+print(r.squaredGLMM(project.aware))
+
+# Chisq
+Anova(project.aware, Type = 2)
+
+# Likelihood Ratio Test
+project.aware.noslope <- glmer(contains_bug ~ (1 | project) + fix + ns + nf + relative_churn + lt, 
+                               data = all_projects, family = "binomial")
+mixed.effect.null <- glm(contains_bug ~ fix + ns + nf + relative_churn + lt, 
+                         data = all_projects, family = "binomial")
+anova(project.aware, project.aware.noslope, mixed.effect.null)
+
+# ===================== RQ5 ========================
+# Model training
+context.aware <- glmer(contains_bug ~ (0 + norm_entropy | project) + fix + ns + nf + relative_churn + lt + (1 | language) + (1 | language_count) + (1 | TLOC) + (1 | NFILES) + (1 | NCOMMIT) + (1 | NDEV) + (1 | audience) + (1 | ui) + (1 | database), 
+                       data = all_projects, family = "binomial", 
+                       control=glmerControl(optimizer="optimx",
+                                            optCtrl=list(method="nlminb")))
+
+# Median Absolute Error for entropy and intercepts
+context.aware.entropy <- coef(context.aware)[[1]][,1]
+context.aware.intercept <- c(-0.412809322, -0.403441522, -0.368979092, -0.019905339, -0.548783572, 
+                              -0.669703372, 0.387229798, -0.295431722, 0.301578719, -0.049754352, 
+                              0.136789488, 0.221394998, -0.145870962, -0.161213922, 0.412493888, 
+                              -0.431692062, -0.528704192, 0.132923678, -0.112635552, 0.714081312) # sum of intercepts of contextual factors for each project
+median(abs(local.entropy - context.aware.entropy)) # MAE for Entropy
+median(abs(local.intercept - context.aware.intercept)) # MAE for intercepts
+
+# Goodness-of-fit
+print(r.squaredGLMM(context.aware))
+
+# Chisq
+Anova(project.aware, Type = 2)
+
+# Likelihood Ratio Test (using multicores to train models parallelly)
+get_randomeff_models <- function(id) {
+  random.eff.formula <- c()
+  random.eff.formula[[1]] <- contains_bug ~ (0 + norm_entropy | project) + fix + ns + nf + relative_churn + lt + (1 | language) + (1 | language_count) + (1 | TLOC) + (1 | NFILES) + (1 | NCOMMIT) + (1 | NDEV) + (1 | audience) + (1 | ui)
+  random.eff.formula[[2]] <- contains_bug ~ (0 + norm_entropy | project) + fix + ns + nf + relative_churn + lt + (1 | language) + (1 | language_count) + (1 | TLOC) + (1 | NFILES) + (1 | NCOMMIT) + (1 | NDEV) + (1 | audience)
+  random.eff.formula[[3]] <- contains_bug ~ (0 + norm_entropy | project) + fix + ns + nf + relative_churn + lt + (1 | language) + (1 | language_count) + (1 | TLOC) + (1 | NFILES) + (1 | NCOMMIT) + (1 | NDEV)
+  random.eff.formula[[4]] <- contains_bug ~ (0 + norm_entropy | project) + fix + ns + nf + relative_churn + lt + (1 | language) + (1 | language_count) + (1 | TLOC) + (1 | NFILES) + (1 | NCOMMIT)
+  random.eff.formula[[5]] <- contains_bug ~ (0 + norm_entropy | project) + fix + ns + nf + relative_churn + lt + (1 | language) + (1 | language_count) + (1 | TLOC) + (1 | NFILES)
+  random.eff.formula[[6]] <- contains_bug ~ (0 + norm_entropy | project) + fix + ns + nf + relative_churn + lt + (1 | language) + (1 | language_count) + (1 | TLOC)
+  random.eff.formula[[7]] <- contains_bug ~ (0 + norm_entropy | project) + fix + ns + nf + relative_churn + lt + (1 | language) + (1 | language_count)
+  random.eff.formula[[8]] <- contains_bug ~ (0 + norm_entropy | project) + fix + ns + nf + relative_churn + lt + (1 | language)
+  random.eff.formula[[9]] <- contains_bug ~ (0 + norm_entropy | project) + fix + ns + nf + relative_churn + lt
+  
+  if (id == 1 || id == 5 || id == 7) {
+    tmp_mixed_model <- glmer(random.eff.formula[[id]], 
+                             data = all_projects, family = "binomial")
+  }
+  else {
+    tmp_mixed_model <- glmer(random.eff.formula[[id]], 
+                             data = all_projects, family = "binomial", 
+                             control=glmerControl(optimizer="optimx",
+                                                  optCtrl=list(method="nlminb")))
+  }
+  
+  return(tmp_mixed_model)
+}
+registerDoParallel(cores=detectCores())
+randomeff_models <- llply(seq(1, 9, 1), get_randomeff_models, .parallel = TRUE)
+anova(context.aware, randomeff_models[[1]], randomeff_models[[2]], randomeff_models[[3]], randomeff_models[[4]], randomeff_models[[5]], 
+      randomeff_models[[6]], randomeff_models[[7]], randomeff_models[[8]], randomeff_models[[9]], mixed.effect.null)
+
+# ===================== RQ6 ========================
 # Performance of Global JIT Model (Random Forest)
 rf_perf <- as.data.frame(c())
 for (i in 1:length(project_names)) {
